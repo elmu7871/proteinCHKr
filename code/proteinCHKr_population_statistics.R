@@ -109,7 +109,6 @@ for (i in 1:nrow(popoutput)) {
 gene2hgnc <- readRDS(file = here("proteinCHKr", "accessories", "gene2hgnc.rmd"))
 
 popoutput <- popoutput %>% left_join(gene2hgnc, by = "ensembl_gene_id")
-# starting to feel like this would be easier in java lmao. so much spaghetti
 
 saveRDS(popoutput, file = here("proteinCHKr", "accessories", "popoutput.rds"))
 write_csv(popoutput, file = here("proteinCHKr", "results", "popoutput.rds"))
