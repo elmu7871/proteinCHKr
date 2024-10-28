@@ -1,0 +1,220 @@
+---
+title: "proteinCHKr"
+author: "Libby Murphy"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+developing the protein CHKr
+
+now playing: "Cruel Summer" and "I Think He Knows" by Taylor Swift (Lover)
+
+shoutout to Leven Deli for use of their wifi to send thousands of queries to ensembl
+
+```{r setup}
+library(dplyr)
+library(readr)
+library(here)
+library(biomaRt)
+library(tidyverse)
+library(conflicted)
+library(stringr)
+library(Hmisc)
+```
+
+```{r read in proteomeStats}
+proteomeStats <- readRDS(file = here("proteinCHKr", "accessories", "proteomeStats.rds"))
+
+# this file was generated from GRCh38.p14 on 20240412 by randomly selecting 3000 protein coding genes and averaging their combined percent cysteine/histidine/lysine content to get an accurate estimate of the mean and sd for the whole human proteome's CHK percent. see here/proteinCHKr/code/proteinCHKr_population_statistics.Rmd for more info
+```
+
+```{r build the proteinCHKr}
+# function: retrieve peptide sequences from ensembl via their gene symbol 
+
+proteinCHKr <- function(IDtype, IDlist) {
+  proteomeStats <- read_rds(file = here("proteinCHKr", "accessories", "proteomeStats.rds"))
+  popoutput <- read_rds(file = here("proteinCHKr", "accessories", "popoutput.rds"))
+  tx2gene2hgnc <- readRDS(file = here("proteinCHKr", "accessories", "tx2gene2hgnc.rmd"))
+  
+  ensembl <- useEnsembl(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl")
+  
+  tmp <- case_when(IDtype == "genesymbol" ~ "hgnc_symbol",
+                   IDtype == "ENST" ~ "ensembl_transcript_id",
+                   IDtype == "ENSG" ~ "ensembl_gene_id",
+                   TRUE ~ "error")
+  if(tmp == "error") {
+    stop("error: IDtype argument must be equal to genesymbol, ENSG, or ENST. IDtype argument must be in quotation marks")
+  }
+  
+  seqs <- getSequence(id = IDlist,
+            type = tmp,
+            seqType = "peptide",
+            mart = ensembl) %>%
+  dplyr::filter(peptide != "Sequence unavailable")
+  
+  for(i in 1:nrow(seqs)) {
+  seqs$length[i] <- nchar(seqs$peptide[i])
+  }
+
+  for(i in 1:nrow(seqs)) {
+    seqs$chk[i] <- sum(str_count(string = seqs$peptide[i], pattern = c("C", "H", "K")))
+  }
+
+  for (i in 1:nrow(seqs)) {
+    seqs$percentCHK[i] <- (seqs$chk[i] / seqs$length[i]) * 100
+  }
+
+  for (i in 1:nrow(seqs)) {
+    if (seqs$percentCHK[i] > proteomeStats$upper) {
+      seqs$above[i] <- TRUE
+    } else {
+      seqs$above[i] <- FALSE
+    }
+  }
+  
+  for (i in 1:nrow(seqs)) {
+    if (seqs$percentCHK[i] < proteomeStats$lower) {
+      seqs$below[i] <- TRUE
+    } else {
+      seqs$below[i] <- FALSE
+    }
+  }
+
+  left_join(seqs, tx2gene2hgnc, by = tmp)
+  seqs<<-seqs  
+
+  output <<- seqs %>%
+    group_by(hgnc_symbol) %>%
+    summarise(percentCHKmean = mean(percentCHK))
+
+  for (i in 1:nrow(output)) {
+    if (output$percentCHKmean[i] > proteomeStats$upper) {
+      output$above[i] <- TRUE
+    } else {
+      output$above[i] <- FALSE
+    }
+  }
+  
+  for (i in 1:nrow(output)) {
+    if (output$percentCHKmean[i] < proteomeStats$lower) {
+      output$below[i] <- TRUE
+    } else {
+      output$below[i] <- FALSE
+    }
+  }
+  
+
+print(output)
+
+write_csv(output, file = here("proteinCHKr", "results", paste(Sys.Date(), "_proteinCHKr_results.csv", sep = "")))
+
+}
+# note: proteinCHKr will send a query to ensembl! make sure you have a stable wifi connection
+```
+
+```{r proteinCHKr debugged}
+proteinCHKr <- function(IDtype, IDlist) {
+
+  proteomeStats <- read_rds(file = here("proteinCHKr", "accessories", "proteomeStats.rds"))
+  popoutput <- read_rds(file = here("proteinCHKr", "accessories", "popoutput.rds")) 
+  gene2hgnc <- readRDS(file = here("proteinCHKr", "accessories", "gene2hgnc.rmd"))
+  
+  ensembl <- useEnsembl(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl")
+  
+  tmp <- case_when(IDtype == "genesymbol" ~ "hgnc_symbol",
+                   IDtype == "ENSG" ~ "ensembl_gene_id",
+                   TRUE ~ "error")
+  
+  if(tmp == "error") {
+    stop("error: IDtype argument must be equal to genesymbol, ENSG, or ENST. IDtype argument must be in quotation marks")
+  }
+  
+  seqs <- getSequence(id = IDlist,
+                      type = tmp,
+                      seqType = "peptide",
+                      mart = ensembl) %>%
+    dplyr::filter(peptide != "Sequence unavailable")
+  
+  # banana can i make this for loop run in sucha. way that it can create a column and then reference it without exiting the loop and entering a new one?
+  
+  for(i in 1:nrow(seqs)) {
+    seqs$length[i] <- nchar(seqs$peptide[i])
+  }
+  
+  for(i in 1:nrow(seqs)) {
+    seqs$chk[i] <- sum(str_count(string = seqs$peptide[i], pattern = c("C", "H", "K")))
+  }
+  
+  for (i in 1:nrow(seqs)) {
+    seqs$percentCHK[i] <- (seqs$chk[i] / seqs$length[i]) * 100
+  }
+  
+  for (i in 1:nrow(seqs)) {
+    if (seqs$percentCHK[i] > proteomeStats$upper) {
+      seqs$above[i] <- TRUE
+    } else {
+      seqs$above[i] <- FALSE
+    }
+  }
+  
+  for (i in 1:nrow(seqs)) {
+    if (seqs$percentCHK[i] < proteomeStats$lower) {
+      seqs$below[i] <- TRUE
+    } else {
+      seqs$below[i] <- FALSE
+    }
+  }
+  
+  seqs <- (left_join(seqs, gene2hgnc, by = tmp))[,c(2,8,3,4,5,6,7,1)]
+  
+  output <- seqs %>%
+    group_by(hgnc_symbol) %>%
+    summarise(percentCHKmean = mean(percentCHK))
+  
+  for (i in 1:nrow(output)) {
+    if (output$percentCHKmean[i] > proteomeStats$upper) {
+      output$above[i] <- TRUE
+    } else {
+      output$above[i] <- FALSE
+    }
+  }
+  
+  for (i in 1:nrow(output)) {
+    if (output$percentCHKmean[i] < proteomeStats$lower) {
+      output$below[i] <- TRUE
+    } else {
+      output$below[i] <- FALSE
+    }
+  }
+  
+  # saving to environment and to drive for maximum flexibility
+  seqs <<- seqs
+  output <<- output
+  
+  write_csv(seqs, file = here("proteinCHKr", "results", paste(Sys.Date(), IDlist, "_proteinCHKr_sequences.csv", sep = "")))
+  write_csv(output, file = here("proteinCHKr", "results", paste(Sys.Date(), IDlist, "_proteinCHKr_results.csv", sep = "")))
+
+}
+```
+
+```{r try it out}
+mylist <- c("ALDH2", "COL1A1", "ALB", "SIRT3", "PRX6", "HSA", "GAPDH")
+proteinCHKr(IDtype = "genesymbol", IDlist = mylist)
+```
+
+```{r i want to try making scatter plots with color highlighting as a way to visualize this data}
+# not entirely sure what i want to do here but i'll play around and see what sticks
+
+##### this is all still spaghetti. i'll come back to this soon!
+
+# banana current status: need to get seqs and samplepeptides to have the same columns. i'll do this by changing the code that generates them so that they're the same from the start
+# popoutput <- readRDS(file = here("proteinCHKr", "accessories", "popoutput.rds"))
+# samplepeptides <- readRDS(file = here("proteinCHKr", "accessories", "samplepeptides.rds"))
+# seqs
+# 
+# mygenes <- c("ENSG00000166949", "ENSG00000106799", "ENSG00000163513")
+# 
+# ggplot(samplepeptides) +
+#   geom_point(aes(x = length, y = percentCHK), color = ifelse(samplepeptides$ensembl_gene_id %in% mygenes, "red", "black"))
+```
