@@ -1,0 +1,107 @@
+---
+title: "example_qPCR_analysis"
+author: "Libby Murphy"
+date: "`Sys.Date()"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Example qPCR analysis
+
+This is an example qPCR analysis
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+library(tidyverse)
+library(here)
+library(purrr)
+library(conflicted)
+conflicts_prefer(dplyr::filter)
+library(ggprism)
+
+experiment <- "qPCR"
+```
+
+## QC comparisons 
+
+```{r qc, echo=FALSE}
+# read in data file 
+data <- read_csv(here::here(experiment, "data", "example_qPCR.csv")) %>% dplyr::select("Well", "Target", "Sample", "Cq")
+
+Cq_QC <- ggplot(data = data, aes(y = Cq, x = Target, color = Sample)) +
+  geom_jitter(width = .2, size = 2) + 
+  theme_prism() + 
+  ylim(0,40) +
+  ggtitle("Cq") +
+  theme(axis.text.x = element_text(angle = 60, hjust=1))
+
+Cq_QC
+
+data[!is.na(data$Cq),] %>% dplyr::filter(Target == "GUSB", Sample != "CALIB_NA", Sample != "NTC_NA") %>% pull(Cq) %>% sd() 
+data[!is.na(data$Cq),] %>% dplyr::filter(Target == "PPIA", Sample != "CALIB_NA", Sample != "NTC_NA") %>% pull(Cq) %>% sd()
+
+# remove H2ONTC and noRT samples
+data_filt <- data %>% filter(Sample != "NTC_NA")
+
+# remove all rows with a Cq of NaN
+data_filt <- na.omit(data_filt)
+```
+
+```{r normalization, echo=FALSE}
+# group data into individual conditions and calculate the condition mean. 
+dataSum <- data_filt %>% 
+  group_by(Target, Sample) %>%
+  dplyr::summarise(Cq = mean(Cq)) %>%
+  pivot_wider(names_from = Target, values_from = Cq) #two values are missing: veh_compoundA PPIA and veh_compoundA SERPINE1. This is because both Cqs came out as NaN for veh_compoundA PPIA and 
+
+# calculate deltaCq (dCq). Select other targets and subtract HKG from them to get dCq
+data_dCq <- bind_cols(
+  dataSum %>% dplyr::select(Sample),
+  dataSum %>% purrr::keep(is.numeric) - dataSum$PPIA
+  ) %>% 
+  dplyr::select(-"PPIA")
+
+tmp <- data_dCq %>% purrr::keep(is.numeric) %>% t() %>% as.data.frame()
+
+colnames(tmp) <- data_dCq %>% dplyr::select(Sample) %>% as.matrix()
+
+ddCq <- tmp %>%
+  mutate(veh_compoundB = veh_compoundB - CALIB_NA) %>%
+  mutate(veh_compoundA = veh_compoundA - CALIB_NA) %>%
+  mutate(tx_compoundB = tx_compoundB - CALIB_NA) %>%
+  mutate(tx_compoundA = tx_compoundA - CALIB_NA) %>%
+  select(-CALIB_NA)
+
+ddCq_lfc <- 2^-(ddCq)
+
+ddCq_preplot <- data.frame(t(ddCq_lfc)) %>% rownames_to_column(var = "Sample") 
+
+ddCq_plot <- reshape2::melt(ddCq_preplot, value.name = "ddCq", variable.name = "target") %>% separate(col = Sample, into = c("cocktail", "tx"), sep = "_")
+```
+
+```{r plotting}
+ddCq_plot$cocktail <- factor(ddCq_plot$cocktail, levels = c("veh", "tx"))
+ddCq_plot$tx <- factor(ddCq_plot$tx, levels = c("compoundA", "compoundB"))
+
+pddCq <- ggplot(ddCq_plot[!c(grepl(pattern = "GUSB", ddCq_plot$target)),]) +
+  geom_col(aes(x = cocktail, y = ddCq, fill = tx), position = position_dodge()) +
+  facet_grid(~ target) +
+  theme_prism() +
+  ylab("lfc") +
+  scale_fill_manual(values = c("grey25", "grey75")) +
+  theme(axis.text.x = element_text(angle = 60, hjust=0.5)) +
+  ggtitle("example_qPCR")
+
+pddCq
+
+Cq_QC
+
+ggsave(filename = "example_qPCR.png", plot = cowplot::plot_grid(Cq_QC, pddCq, nrow = 1), device = "png", height = 5, width = 15, path = here::here(experiment, "results"))
+
+ggsave(filename = "example_qPCR_lfc.png", plot = pddCq, device = "png", height = 5, width = 10, path = here::here(experiment, "results"))
+
+ggsave(filename = "example_qPCR_Cq.png", plot = Cq_QC, device = "png", height = 5, width = 8, path = here::here(experiment, "results"))
+
+write_csv(ddCq_plot, file = here(experiment, "results", "example_qPCR_lfc.csv"))
+```
